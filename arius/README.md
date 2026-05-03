@@ -19,7 +19,7 @@ Plataforma multi-agente para ERP retail (Arius Sistemas).
 
 1. HealthScore 🔴
 2. QualityScore 🔴
-3. Circuit Breakers 🟢 *(no Linear — migração para este repo pendente)*
+3. [Circuit Breakers](./03-circuit-breakers.md) 🟢
 4. SLOs ⚪
 5. Audit Log 🔴
 6. [Heartbeat](./06-heartbeat.md) 🟢
@@ -35,4 +35,4 @@ Plataforma multi-agente para ERP retail (Arius Sistemas).
 
 ## Histórico
 
-- **2026-05-02:** Migração do Reference Arius do Linear (que comprometeu o save monolítico) para `erickmarinho-notebook`. §6 Heartbeat migrado primeiro (cartografia arqueológica de 8 áreas, 4 issues criadas como gaps registrados, validação cross-source contra código real durante migração — 2 divergências corrigidas). §3 Circuit Breakers permanece no Linear até próxima sessão.
+- **2026-05-02:** Migração do Reference Arius do Linear (que comprometeu o save monolítico) para `erickmarinho-notebook`. §6 Heartbeat migrado primeiro (cartografia arqueológica de 8 áreas, 4 issues criadas como gaps registrados, validação cross-source contra código real durante migração — 2 divergências corrigidas). §3 Circuit Breakers migrado em seguida (8 issues mergeadas, primeiro conceito a alcançar 🟢, validação cross-source corrigiu 3 divergências de path/linha reconstruídas do transcript). 2 conceitos centrais agora 🟢 estrito.
