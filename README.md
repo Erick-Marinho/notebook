@@ -1,7 +1,7 @@
-# Notebook
+# erickmarinho-notebook
 
-A personal notebook project.
+Notebook técnico pessoal — fonte de verdade e consulta para projetos.
 
-## Getting Started
+## Domínios
 
-This repository contains my notes and documentation.
+- [arius/](./arius/) — plataforma Arius (agent-standard + observatory)
