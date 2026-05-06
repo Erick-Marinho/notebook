@@ -1,8 +1,8 @@
 # §6 Heartbeat
 
-> **Status:** 🟢 **Documentado e validado empiricamente.** Cartografia cross-repo completa em 8 áreas (2026-05-02), schema canônico mapeado, pipeline `ProcessHeartbeat` documentado linha-a-linha, drift histórico registrado, 4 gaps identificados e registrados como issues ([ARI-210](https://linear.app/arius-ai/issue/ARI-210) stale detection / [ARI-211](https://linear.app/arius-ai/issue/ARI-211) error_count cleanup / [ARI-212](https://linear.app/arius-ai/issue/ARI-212) try/except no loop / [ARI-213](https://linear.app/arius-ai/issue/ARI-213) latency/cost zerados). **Segundo conceito da plataforma Arius a alcançar 🟢 estrito.**
+> **Status:** 🟢 **Documentado e validado empiricamente.** Cartografia cross-repo completa em 8 áreas (2026-05-02), schema canônico mapeado, pipeline `ProcessHeartbeat` documentado linha-a-linha, drift histórico registrado, 4 gaps identificados e registrados como issues ([ARI-210](https://linear.app/arius-ai/issue/ARI-210) stale detection / [ARI-211](https://linear.app/arius-ai/issue/ARI-211) error_count cleanup resolvido em 2026-05-05 / [ARI-212](https://linear.app/arius-ai/issue/ARI-212) try/except no loop / [ARI-213](https://linear.app/arius-ai/issue/ARI-213) latency/cost zerados). **Segundo conceito da plataforma Arius a alcançar 🟢 estrito.**
 >
-> **Última atualização:** 2026-05-02 (sessão 3 — pós cartografia §6)
+> **Última atualização:** 2026-05-05 (ARI-211 — cleanup de `HeartbeatRequest.error_count`)
 
 ---
 
@@ -78,7 +78,6 @@ class CircuitBreakerStateRequest(BaseModel):
 
 class HeartbeatRequest(BaseModel):
     version: str | None = None                  # Optional
-    error_count: int | None = Field(default=None, ge=0)            # Existe APENAS no servidor
     circuit_breakers: list[CircuitBreakerStateRequest] | None = None
     counters: CountersRequest | None = None
 ```
@@ -142,7 +141,7 @@ heartbeat_interval_seconds: int = Field(
 1. `agent_repo.get_agent_by_slug(slug)` → 404 se None
 2. `agent.last_heartbeat_at = now`
 3. Se `payload.version ≠ None` → `agent.version = payload.version`
-4. `agent.status = compute_status(last_heartbeat_at, now, timeout_seconds, error_count)` (StatusEngine)
+4. `agent.status = compute_status(last_heartbeat_at, now, timeout_seconds)` (StatusEngine)
 5. `agent_repo.update_agent(agent)` (write síncrona, parte da transação principal)
 6. **Bloco try isolado** — Se `payload.circuit_breakers and self._cb_repo`:
    - Stamp com `agent_id` real + `now`
@@ -323,7 +322,7 @@ Cada heartbeat gera um `audit_log` entry com payload completo do que o agente en
 - [ARI-165](https://linear.app/arius-ai/issue/ARI-165) — seed de CBs no startup via Observatory (consumidor indireto de info que heartbeat também transporta)
 - [ARI-209](https://linear.app/arius-ai/issue/ARI-209) — propagação de `fail_max` / `reset_timeout_seconds` via heartbeat
 - [ARI-210](https://linear.app/arius-ai/issue/ARI-210) (Backlog High, 5pts) — **stale detection: `agent.status` não é reclassificado quando heartbeats param**
-- [ARI-211](https://linear.app/arius-ai/issue/ARI-211) (Backlog Low, 2pts) — cleanup: `error_count` em `HeartbeatRequest` é dead code
+- [ARI-211](https://linear.app/arius-ai/issue/ARI-211) — cleanup aplicado: `error_count` removido de `HeartbeatRequest`
 - [ARI-212](https://linear.app/arius-ai/issue/ARI-212) (Backlog High, 3pts) — `_heartbeat_loop` sem try/except externo
 - [ARI-213](https://linear.app/arius-ai/issue/ARI-213) (Backlog Medium, 5pts) — popular `avg_latency_ms`, `p95_latency_ms`, `total_cost_usd` em `agent_snapshots`
 
@@ -371,7 +370,6 @@ agent loop _heartbeat_loop (60s)
 | [ARI-210](https://linear.app/arius-ai/issue/ARI-210) | High | Cliente Pulso vê dashboard verde para agent morto — gap crítico de produto Camada 2 |
 | [ARI-212](https://linear.app/arius-ai/issue/ARI-212) | High | Loop pode morrer silenciosamente; combinado com [ARI-210](https://linear.app/arius-ai/issue/ARI-210), agent silencia sem ninguém notar |
 | [ARI-213](https://linear.app/arius-ai/issue/ARI-213) | Medium | `agent_snapshots` parcial: latency/p95/cost zerados — limita HealthScore e clientes Pulso direto |
-| [ARI-211](https://linear.app/arius-ai/issue/ARI-211) | Low | `error_count` dead code: drift histórico que confunde devs futuros |
 
 **Combinação [ARI-210](https://linear.app/arius-ai/issue/ARI-210) + [ARI-212](https://linear.app/arius-ai/issue/ARI-212) = defesa em profundidade necessária:** ambas issues precisam fechar para garantir detecção de agent ausente em produção. Documentação atual reconhece o gap conscientemente.
 
@@ -407,19 +405,17 @@ HeartbeatPayload {
 | `circuit_breakers` | Required (lista, pode `[]`) | Optional `None` | Idem |
 | `counters` | Required | Optional | Idem |
 | `fail_max`, `reset_timeout_seconds` | Required ([ARI-209](https://linear.app/arius-ai/issue/ARI-209)) | Optional (retro-compat) | Decisão deliberada |
-| `error_count` | **NÃO ENVIADO** | Optional | **Dead code ([ARI-211](https://linear.app/arius-ai/issue/ARI-211))** |
 | `process_started_at` | str ISO | datetime | Pydantic faz coerce — sem rachadura |
 | `last_state_change` | str ISO | datetime | Idem |
 
 ### Gaps no contrato (registrados como issues)
 
-1. **`error_count` dead code ([ARI-211](https://linear.app/arius-ai/issue/ARI-211)):** schema servidor tem campo que `compute_status` consome, mas agent nunca envia. Ramo "DEGRADED por `error_count > 0`" do StatusEngine é dead code via canal heartbeat-padrão. Substituição semântica: `counters.errors_total`.
-2. **Métricas de latência/custo zeradas ([ARI-213](https://linear.app/arius-ai/issue/ARI-213)):** `agent_snapshots` tem 3 campos como TECH DEBT (`avg_latency_ms`, `p95_latency_ms`, `total_cost_usd`). Bloqueia HealthScore e Pulso Camada 2.
-3. **`last_error_*` só via push:** heartbeat não carrega contexto de erro do CB. Se push falha (sem retry), essa dimensão de auditoria se perde. Heartbeat seguinte sincroniza state+fail_count mas não a causa.
+1. **Métricas de latência/custo zeradas ([ARI-213](https://linear.app/arius-ai/issue/ARI-213)):** `agent_snapshots` tem 3 campos como TECH DEBT (`avg_latency_ms`, `p95_latency_ms`, `total_cost_usd`). Bloqueia HealthScore e Pulso Camada 2.
+2. **`last_error_*` só via push:** heartbeat não carrega contexto de erro do CB. Se push falha (sem retry), essa dimensão de auditoria se perde. Heartbeat seguinte sincroniza state+fail_count mas não a causa.
 
 ### Conclusão da seção 6.4
 
-Contrato **funcional para Camada 1** × Operador/SRE (operação básica do Arius admin). **Camada 2 × Cliente Pulso direto exige resolução de [ARI-210](https://linear.app/arius-ai/issue/ARI-210) (stale detection) + [ARI-213](https://linear.app/arius-ai/issue/ARI-213) (latency/cost)** para experiência completa. [ARI-211](https://linear.app/arius-ai/issue/ARI-211) e [ARI-212](https://linear.app/arius-ai/issue/ARI-212) são robustez/cleanup, não bloqueiam contrato.
+Contrato **funcional para Camada 1** × Operador/SRE (operação básica do Arius admin). **Camada 2 × Cliente Pulso direto exige resolução de [ARI-210](https://linear.app/arius-ai/issue/ARI-210) (stale detection) + [ARI-213](https://linear.app/arius-ai/issue/ARI-213) (latency/cost)** para experiência completa. [ARI-211](https://linear.app/arius-ai/issue/ARI-211) foi resolvida como cleanup; [ARI-212](https://linear.app/arius-ai/issue/ARI-212) segue como robustez sem bloquear o contrato.
 
 ---
 
