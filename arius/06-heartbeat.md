@@ -1,8 +1,8 @@
 # §6 Heartbeat
 
-> **Status:** 🟢 **Documentado e validado empiricamente.** Cartografia cross-repo completa em 8 áreas (2026-05-02), schema canônico mapeado, pipeline `ProcessHeartbeat` documentado linha-a-linha, drift histórico registrado, 4 gaps identificados e registrados como issues ([ARI-210](https://linear.app/arius-ai/issue/ARI-210) stale detection / [ARI-211](https://linear.app/arius-ai/issue/ARI-211) error_count cleanup resolvido em 2026-05-05 / [ARI-212](https://linear.app/arius-ai/issue/ARI-212) try/except no loop / [ARI-213](https://linear.app/arius-ai/issue/ARI-213) latency/cost zerados). **Segundo conceito da plataforma Arius a alcançar 🟢 estrito.**
+> **Status:** 🟢 **Documentado e validado empiricamente.** Cartografia cross-repo completa em 8 áreas (2026-05-02), schema canônico mapeado, pipeline `ProcessHeartbeat` documentado linha-a-linha, drift histórico registrado, 4 gaps identificados e registrados como issues ([ARI-210](https://linear.app/arius-ai/issue/ARI-210) stale detection / [ARI-211](https://linear.app/arius-ai/issue/ARI-211) error_count cleanup resolvido em 2026-05-05 / [ARI-212](https://linear.app/arius-ai/issue/ARI-212) try/except no loop resolvido em 2026-05-06 / [ARI-213](https://linear.app/arius-ai/issue/ARI-213) latency/cost zerados). **Segundo conceito da plataforma Arius a alcançar 🟢 estrito.**
 >
-> **Última atualização:** 2026-05-05 (ARI-211 — cleanup de `HeartbeatRequest.error_count`)
+> **Última atualização:** 2026-05-06 (ARI-212 — try/except no `_heartbeat_loop`)
 
 ---
 
@@ -127,9 +127,7 @@ heartbeat_interval_seconds: int = Field(
 - **Sem jitter na cadência** (existe apenas no retry interno do client)
 - **Sem backoff na cadência** (idem)
 
-**Recuperação se loop crashar:** o cliente captura exceptions de rede; o loop em si **NÃO tem try/except envolvendo a iteração**. Se `HeartbeatPayload(...)` lançar (ex: validação falha após hot-deploy de schema), task fica em estado FAILED silenciosamente. Sem auto-restart.
-
-> **Gap registrado ([ARI-212](https://linear.app/arius-ai/issue/ARI-212), High 3pts):** loop sem try/except externo. Combinação crítica com [ARI-210](https://linear.app/arius-ai/issue/ARI-210) (stale detection): bug em produção pode silenciar agent sem ninguém detectar.
+**Recuperação se loop crashar:** o cliente captura exceptions de rede; o loop em si **tem try/except envolvendo a iteração** (ARI-212 resolvida 2026-05-06). Falha em uma iteração emite log estruturado (`heartbeat_iteration_failed`) + Langfuse event (defesa em profundidade) e próxima iteração roda normal. Loop NUNCA morre silenciosamente — apenas via `task.cancel()` no shutdown.
 
 ---
 ### Pipeline completo no Observatory (`ProcessHeartbeat`)
@@ -323,7 +321,7 @@ Cada heartbeat gera um `audit_log` entry com payload completo do que o agente en
 - [ARI-209](https://linear.app/arius-ai/issue/ARI-209) — propagação de `fail_max` / `reset_timeout_seconds` via heartbeat
 - [ARI-210](https://linear.app/arius-ai/issue/ARI-210) (Backlog High, 5pts) — **stale detection: `agent.status` não é reclassificado quando heartbeats param**
 - [ARI-211](https://linear.app/arius-ai/issue/ARI-211) — cleanup aplicado: `error_count` removido de `HeartbeatRequest`
-- [ARI-212](https://linear.app/arius-ai/issue/ARI-212) (Backlog High, 3pts) — `_heartbeat_loop` sem try/except externo
+- [ARI-212](https://linear.app/arius-ai/issue/ARI-212) (Done — mergeada 2026-05-06) — try/except + log estruturado + Langfuse event no `_heartbeat_loop`. Loop sobrevive a `ValidationError` em Pydantic, `RuntimeError` em registry, e qualquer outra `Exception`. CancelledError preservada (shutdown intencional continua funcionando).
 - [ARI-213](https://linear.app/arius-ai/issue/ARI-213) (Backlog Medium, 5pts) — popular `avg_latency_ms`, `p95_latency_ms`, `total_cost_usd` em `agent_snapshots`
 
 ---
@@ -367,11 +365,10 @@ agent loop _heartbeat_loop (60s)
 
 | Issue | Prioridade | Impacto |
 | -- | -- | -- |
-| [ARI-210](https://linear.app/arius-ai/issue/ARI-210) | High | Cliente Pulso vê dashboard verde para agent morto — gap crítico de produto Camada 2 |
-| [ARI-212](https://linear.app/arius-ai/issue/ARI-212) | High | Loop pode morrer silenciosamente; combinado com [ARI-210](https://linear.app/arius-ai/issue/ARI-210), agent silencia sem ninguém notar |
+| [ARI-210](https://linear.app/arius-ai/issue/ARI-210) | High | Cliente Pulso vê dashboard verde para agent morto. Defesa em profundidade do agent-side já foi feita em ARI-212 (loop sobrevive a exceptions); falta detecção server-side em stale detection. |
 | [ARI-213](https://linear.app/arius-ai/issue/ARI-213) | Medium | `agent_snapshots` parcial: latency/p95/cost zerados — limita HealthScore e clientes Pulso direto |
 
-**Combinação [ARI-210](https://linear.app/arius-ai/issue/ARI-210) + [ARI-212](https://linear.app/arius-ai/issue/ARI-212) = defesa em profundidade necessária:** ambas issues precisam fechar para garantir detecção de agent ausente em produção. Documentação atual reconhece o gap conscientemente.
+**ARI-212 resolvida (2026-05-06):** defesa em profundidade do agent-side completa. Loop sobrevive a `ValidationError`, `RuntimeError` e qualquer outra `Exception`. ARI-210 (server-side stale detection) ainda em aberto — quando resolvida, fecha completamente o ciclo de detecção de agent ausente.
 
 ---
 ## 6.4 — Standard envia o necessário?
