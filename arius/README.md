@@ -29,10 +29,11 @@ Plataforma multi-agente para ERP retail (Arius Sistemas).
 
 8. Multi-tenancy / PulsoHierarchy 🔴
 9. Policy Enforcement Point (PEP) 🔴
-10. Onion Architecture (C1-C4) 🟡
+10. [Onion Architecture (C1-C4)](./10-onion-architecture.md) 🟢
 
 ---
 
 ## Histórico
 
-- **2026-05-02:** Migração do Reference Arius do Linear (que comprometeu o save monolítico) para `erickmarinho-notebook`. §6 Heartbeat migrado primeiro (cartografia arqueológica de 8 áreas, 4 issues criadas como gaps registrados, validação cross-source contra código real durante migração — 2 divergências corrigidas). §3 Circuit Breakers migrado em seguida (8 issues mergeadas, primeiro conceito a alcançar 🟢, validação cross-source corrigiu 3 divergências de path/linha reconstruídas do transcript). 2 conceitos centrais agora 🟢 estrito.
+- **2026-05-02:** Migração inicial do Reference Arius do Linear para `erickmarinho-notebook`. §6 Heartbeat e §3 Circuit Breakers migrados via Codex no VS Code com validação cross-source.
+- **2026-05-06:** §10 Onion Architecture migrado com cartografia leve cross-repo (validação de regra de dependência: zero violações em ambos os repos; drift estrutural documentado). 3 conceitos centrais agora 🟢 estrito (§3, §6, §10).
