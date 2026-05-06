@@ -1,8 +1,8 @@
 # §6 Heartbeat
 
-> **Status:** 🟢 **Documentado e validado empiricamente.** Cartografia cross-repo completa em 8 áreas (2026-05-02), schema canônico mapeado, pipeline `ProcessHeartbeat` documentado linha-a-linha, drift histórico registrado, 4 gaps identificados e registrados como issues ([ARI-210](https://linear.app/arius-ai/issue/ARI-210) stale detection / [ARI-211](https://linear.app/arius-ai/issue/ARI-211) error_count cleanup resolvido em 2026-05-05 / [ARI-212](https://linear.app/arius-ai/issue/ARI-212) try/except no loop resolvido em 2026-05-06 / [ARI-213](https://linear.app/arius-ai/issue/ARI-213) latency/cost zerados). **Segundo conceito da plataforma Arius a alcançar 🟢 estrito.**
+> **Status:** 🟢 **Documentado e validado empiricamente.** Cartografia cross-repo completa em 8 áreas (2026-05-02), schema canônico mapeado, pipeline `ProcessHeartbeat` documentado linha-a-linha, drift histórico registrado, 4 gaps identificados e registrados como issues ([ARI-210](https://linear.app/arius-ai/issue/ARI-210) stale detection resolvido em 2026-05-06 / [ARI-211](https://linear.app/arius-ai/issue/ARI-211) error_count cleanup resolvido em 2026-05-05 / [ARI-212](https://linear.app/arius-ai/issue/ARI-212) try/except no loop resolvido em 2026-05-06 / [ARI-213](https://linear.app/arius-ai/issue/ARI-213) latency/cost zerados). **Segundo conceito da plataforma Arius a alcançar 🟢 estrito.**
 >
-> **Última atualização:** 2026-05-06 (ARI-212 — try/except no `_heartbeat_loop`)
+> **Última atualização:** 2026-05-06 (ARI-210 + ARI-212 — defesa em profundidade completa)
 
 ---
 
@@ -287,24 +287,21 @@ Counters fazem parte do payload de heartbeat mas têm vida própria.
 | `GET /agents/{slug}/circuit-breakers` | `list[CircuitBreakerStateResponse]` |
 | `GET /intelligence/agents/{slug}/health-score` | `HealthScoreResponse` (calcula `heartbeat_age_s = now - last_heartbeat_at` on demand) |
 
-### Stale detection — gap crítico registrado
+### Stale detection — resolvida via background sweep
 
-`compute_status` (StatusEngine) é uma função pura chamada APENAS dentro de `ProcessHeartbeat.execute` (`agents.py:191`). **Não há background sweep** que reclassifique `agent.status` quando heartbeats param.
+`compute_status` (StatusEngine) continua sendo uma função pura chamada dentro de `ProcessHeartbeat.execute` (`agents.py:191`) quando heartbeats chegam. Quando heartbeats param, o Observatory agora tem sweep server-side.
 
-**Consequências:**
+**Stale detection ativa via background sweep (ARI-210 resolvida 2026-05-06):**
 
-- Não há background sweep que detecte staleness e mude `agent.status` para `unhealthy`
-- Se um agent deixa de enviar heartbeat:
-  - `last_heartbeat_at` permanece congelado
-  - `agent.status` permanece em `healthy` (ou último valor)
-  - `GET /agents/{slug}` retorna `status="healthy"` indefinidamente
-- `HEARTBEAT_TIMEOUT_SECONDS = 120` (`config.py:14`) é o threshold definido — mas só é avaliado on-demand:
-  - No próximo heartbeat (que pode nunca chegar)
-  - Em `intelligence.py:68-72` ao calcular `heartbeat_age_s` para HealthScore
+`SweepStaleAgents` em `src/application/sweep_stale_agents.py` é executado por background task no lifespan a cada `SWEEP_STALE_AGENTS_INTERVAL_SECONDS` (default 30s). Query usa índice composto `ix_agents_status_last_heartbeat_at`:
+
+`WHERE status='healthy' AND last_heartbeat_at < now - HEARTBEAT_TIMEOUT_SECONDS`
+
+Cada agent marcado como `unhealthy` gera audit_log com action `agent_marked_unhealthy` contendo `previous_status`, `last_heartbeat_at`, `heartbeat_age_seconds`, `timeout_threshold_seconds`. Loop sobrevive a exceptions (lição ARI-212).
+
+Latência máxima de detecção: `HEARTBEAT_TIMEOUT_SECONDS + SWEEP_STALE_AGENTS_INTERVAL_SECONDS` = 150s default.
 
 **Convenção `timeout = 2× interval` (Decisão 3 da §6):** documentada explicitamente para proteger contra alteração silenciosa em uma das pontas. Agent default 60s × 2 = Observatory threshold 120s. Quem alterar uma ponta deve avaliar a outra.
-
-> **Gap registrado ([ARI-210](https://linear.app/arius-ai/issue/ARI-210), High 5pts):** essa lacuna afeta cliente Pulso direto (Camada 2) — ele vê dashboard "tudo verde" para agent morto. Workarounds atuais para consumidores: checar `now - last_heartbeat_at > HEARTBEAT_TIMEOUT_SECONDS` no client side, ou usar `HealthScore` que já recalcula on-demand.
 
 ### Audit log: action=`heartbeat` como contrato implícito
 
@@ -319,7 +316,7 @@ Cada heartbeat gera um `audit_log` entry com payload completo do que o agente en
 - [ARI-164](https://linear.app/arius-ai/issue/ARI-164) — push de transição CB (complementar — fonte de verdade de state atual continua sendo heartbeat)
 - [ARI-165](https://linear.app/arius-ai/issue/ARI-165) — seed de CBs no startup via Observatory (consumidor indireto de info que heartbeat também transporta)
 - [ARI-209](https://linear.app/arius-ai/issue/ARI-209) — propagação de `fail_max` / `reset_timeout_seconds` via heartbeat
-- [ARI-210](https://linear.app/arius-ai/issue/ARI-210) (Backlog High, 5pts) — **stale detection: `agent.status` não é reclassificado quando heartbeats param**
+- [ARI-210](https://linear.app/arius-ai/issue/ARI-210) (Done — mergeada 2026-05-06) — stale detection via background sweep (`SweepStaleAgents`). Marca agent.status='unhealthy' quando heartbeats param. Audit log com action `agent_marked_unhealthy`. Loop com try/except (lição ARI-212).
 - [ARI-211](https://linear.app/arius-ai/issue/ARI-211) — cleanup aplicado: `error_count` removido de `HeartbeatRequest`
 - [ARI-212](https://linear.app/arius-ai/issue/ARI-212) (Done — mergeada 2026-05-06) — try/except + log estruturado + Langfuse event no `_heartbeat_loop`. Loop sobrevive a `ValidationError` em Pydantic, `RuntimeError` em registry, e qualquer outra `Exception`. CancelledError preservada (shutdown intencional continua funcionando).
 - [ARI-213](https://linear.app/arius-ai/issue/ARI-213) (Backlog Medium, 5pts) — popular `avg_latency_ms`, `p95_latency_ms`, `total_cost_usd` em `agent_snapshots`
@@ -365,10 +362,9 @@ agent loop _heartbeat_loop (60s)
 
 | Issue | Prioridade | Impacto |
 | -- | -- | -- |
-| [ARI-210](https://linear.app/arius-ai/issue/ARI-210) | High | Cliente Pulso vê dashboard verde para agent morto. Defesa em profundidade do agent-side já foi feita em ARI-212 (loop sobrevive a exceptions); falta detecção server-side em stale detection. |
 | [ARI-213](https://linear.app/arius-ai/issue/ARI-213) | Medium | `agent_snapshots` parcial: latency/p95/cost zerados — limita HealthScore e clientes Pulso direto |
 
-**ARI-212 resolvida (2026-05-06):** defesa em profundidade do agent-side completa. Loop sobrevive a `ValidationError`, `RuntimeError` e qualquer outra `Exception`. ARI-210 (server-side stale detection) ainda em aberto — quando resolvida, fecha completamente o ciclo de detecção de agent ausente.
+**Defesa em profundidade ARI-210 + ARI-212 completa (2026-05-06):** agent-side (loop sobrevive a exceptions) + server-side (sweep marca agents stale como unhealthy). Cliente Pulso direto agora vê estado real do agent em `GET /agents/{slug}` mesmo se agent crashar ou rede cair. Latência max de detecção: ~150s.
 
 ---
 ## 6.4 — Standard envia o necessário?
