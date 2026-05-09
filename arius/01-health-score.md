@@ -222,7 +222,7 @@ D13 sustentou-se sem custo: cada issue resolveu drift estrutural sem tocar matem
 - [ARI-191](https://linear.app/arius-ai/issue/ARI-191) (Done — mergeada 2026-05-07) — session-per-task na persistência
 - [ARI-192](https://linear.app/arius-ai/issue/ARI-192) (Done — mergeada 2026-05-07) — snapshot dead code removido
 - [ARI-215](https://linear.app/arius-ai/issue/ARI-215) (Done — mergeada 2026-05-08) — `calculated_at` consolidado como autoritativo do use case
-- [ARI-213](https://linear.app/arius-ai/issue/ARI-213) (Backlog Medium) — popular `total_cost_usd` em `agent_snapshots` (cost dimensão separada de HealthScore — §6)
+- [ARI-213](https://linear.app/arius-ai/issue/ARI-213) (Done — mergeada 2026-05-09) — popular `total_cost_usd` em `agent_snapshots` via enrichment background task. Cost agora consumível por SLO eval e Pulso Camada 2 (cost continua dimensão separada de HealthScore — §6).
 - [ARI-214](https://linear.app/arius-ai/issue/ARI-214) (Backlog) — fixture de DB real para testes de integração (bloqueia [ARI-216](https://linear.app/arius-ai/issue/ARI-216))
 - [ARI-216](https://linear.app/arius-ai/issue/ARI-216) (Backlog Medium) — teste de integração [ARI-191](https://linear.app/arius-ai/issue/ARI-191) com DB real
 - [ARI-217](https://linear.app/arius-ai/issue/ARI-217) (Backlog Medium 3pts) — smoke tests Postman atualizados
@@ -289,7 +289,7 @@ GET /intelligence/agents/{slug}/health-score
 | [ARI-216](https://linear.app/arius-ai/issue/ARI-216) | Medium | Teste de integração [ARI-191](https://linear.app/arius-ai/issue/ARI-191) com DB real ainda em backlog (bloqueada por [ARI-214](https://linear.app/arius-ai/issue/ARI-214)). Mock cobre comportamento; defesa em profundidade pendente. |
 | [ARI-217](https://linear.app/arius-ai/issue/ARI-217) | Medium 3pts | Smoke tests Postman desatualizados. Não bloqueia funcionalidade — testes unitários (226 passing) cobrem; smoke é defesa em profundidade adicional. |
 | [ARI-218](https://linear.app/arius-ai/issue/ARI-218) | Medium 2pts | `agent-standard` (instância real em ambiente dev) com heartbeat staleness intermitente. Investigação separada — pode ser config local ou bug latente do loop. |
-| [ARI-213](https://linear.app/arius-ai/issue/ARI-213) | Medium 5pts | `total_cost_usd` zerado em `agent_snapshots`. Não impacta HealthScore (cost é dimensão separada — §6) mas bloqueia visualização de tendência de custo no Pulso Camada 2. |
+| [ARI-213](https://linear.app/arius-ai/issue/ARI-213) | ✅ Done 09/05/2026 | `total_cost_usd` populado via enrichment background task. Pulso Camada 2 desbloqueada. Continua não impactando HealthScore (cost é dimensão separada — §6). |
 
 ### Drift documentado (detalhado)
 
@@ -319,11 +319,11 @@ GET /intelligence/agents/{slug}/health-score
 - **Por que aceitamos hoje:** janela única já dá sinal operacional honesto. Multi-window é refinamento que faz sentido quando alerting automation entrar (paging on burn rate exige múltiplas janelas para reduzir falso-positivo).
 - **Quando melhorar:** quando alerting amadurecer e burn rate virar input de paging. Provavelmente coincide com SLOs §4 ganhar status 🟢.
 
-#### Cost zerado em `agent_snapshots` ([ARI-213](https://linear.app/arius-ai/issue/ARI-213))
+#### Cost em `agent_snapshots` — resolvido em [ARI-213](https://linear.app/arius-ai/issue/ARI-213) (09/05/2026)
 
-- **Estado atual:** `total_cost_usd` em `agent_snapshots` é TECH DEBT zerado (registrado em §6). HealthScore não consome cost — não bloqueia §1.
-- **Por que aceitamos hoje:** HealthScore mede saúde **operacional**, não custo. Cost é dimensão separada que importa para Pulso Camada 2 (visualização de tendência) mas não entra na fórmula de saúde. Decisão consciente: HealthScore não absorve cost.
-- **Quando melhorar:** [ARI-213](https://linear.app/arius-ai/issue/ARI-213) (sessão futura, escopo §6 ou §7 Telemetry).
+- **Estado atual:** `total_cost_usd` populado via background task post-heartbeat. Use case `EnrichSnapshotKPIs` em Observatory consome traces Langfuse v4 via `kpi_calculator` e faz UPDATE no snapshot recém-criado.
+- **Princípio arquitetural preservado:** cost continua dimensão separada de HealthScore (Cenário C). Resolução muda o estado do dado (populado vs zerado), não muda o princípio. HealthScore não absorve cost — §1 mantém foco em saúde operacional.
+- **Desbloqueio:** SLO eval consegue ler cost real (antes lia 0, gerando bug silencioso). Pulso Camada 2 (cliente direto) consegue ver tendência de custo acumulado por agente via `agent_snapshots`.
 
 #### Smoke tests Postman desatualizados ([ARI-217](https://linear.app/arius-ai/issue/ARI-217))
 
@@ -385,7 +385,7 @@ Sete drifts identificados e fechados em 4 sessões (2026-05-07 a 2026-05-08). Ca
 
 ### Conclusão da seção 1.4
 
-Contrato **funcional para Camada 1** (operador/SRE de admin Arius) e **funcional para Camada 2** (cliente Pulso direto consumindo `GET /intelligence/agents/{slug}/health-score`). Bloqueio mencionado em §6 ([ARI-213](https://linear.app/arius-ai/issue/ARI-213) — cost zerado) **não impacta HealthScore** porque cost é dimensão separada (decisão arquitetural deliberada — §1 não absorve cost, espelhando Cenário C HealthScore × QualityScore).
+Contrato **funcional para Camada 1** (operador/SRE de admin Arius) e **funcional para Camada 2** (cliente Pulso direto consumindo `GET /intelligence/agents/{slug}/health-score`). [ARI-213](https://linear.app/arius-ai/issue/ARI-213) (cost zerado em `agent_snapshots`, resolvida 09/05/2026) nunca impactou HealthScore porque cost é dimensão separada (decisão arquitetural deliberada — §1 não absorve cost, espelhando Cenário C HealthScore × QualityScore).
 
 Próximas evoluções (calibração de pesos, threshold por agente, confidence score, multi-window) não são bloqueios para 🟢 — são **roadmap** de v2 documentado em §1.3 drift.
 
@@ -492,3 +492,4 @@ Status epistêmico cumulativo da plataforma: **4/10 🟢, 0/10 🟡, 5/10 🔴, 
 - **2026-05-08 sessão N+3 — p95 + janela ([ARI-157](https://linear.app/arius-ai/issue/ARI-157) + [ARI-158](https://linear.app/arius-ai/issue/ARI-158) mergeadas):** p95 substitui avg na fórmula (long tail visível). Janela temporal explícita 15min default, parametrizada via `HEARTBEAT_WINDOW_MINUTES` (range 1-1440min). Anchor `datetime.now(UTC)` no use case (Q7). Invariante D13 sustentou-se com rename de parâmetro apenas.
 - **2026-05-08 sessão N+4 — persistência completa ([ARI-159](https://linear.app/arius-ai/issue/ARI-159) + [ARI-215](https://linear.app/arius-ai/issue/ARI-215) mergeadas):** `health_score_history` ganha 15 colunas (tabela autoauditável). `calculated_at` consolidado como autoritativo do use case (mesmo anchor da query Langfuse). `penalty_breakdown={}` no caso `unknown` (Q16). P13 novo introduzido (`sum(breakdown) == 100 - score`). Invariante D13 sustentou-se com adição de campo no retorno (`avg_latency_ms` exposto, info já calculada em C3).
 - **2026-05-08 sessão N+5 (final) — §1 → 🟢:** Reference Arius §1 HealthScore redigido no `erickmarinho-notebook` no padrão validado por §3, §6, §10. Estrutura §1.1-§1.4 + Caminho 🟢 + Notas + Histórico. Drift documentado em 6 dimensões (pesos não-calibrados, threshold global, confiança não diferenciada, sem multi-window, cost zerado, smoke Postman desatualizado). 4 issues abertas registradas como roadmap consciente. **§1 HealthScore alcança 🟢 estrito — quarto conceito da plataforma Arius com esse status.** Padrão "função pura matemática como invariante" estabelecido como transferível para §2, §4, §5.
+- **2026-05-09 — Cost dimension consumível em [ARI-213](https://linear.app/arius-ai/issue/ARI-213):** `total_cost_usd` agora populado em `agent_snapshots` via enrichment background task post-heartbeat (detalhes em §6). Princípio arquitetural Cenário C preservado: HealthScore continua não absorvendo cost. Mudança é de estado de dado (populado vs zerado), não de fórmula. SLO eval em cost passa a funcionar (antes era bug silencioso lendo 0). Pulso Camada 2 ganha série temporal de custo consumível por dashboards.

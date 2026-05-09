@@ -1,0 +1,23 @@
+# ARI-213 — Baseline empírica pré-implementação
+# Capturado em: 2026-05-09T01-49-11Z
+# Estado do código rodando: pré-ARI-213 (Observatory container Up há 13h, build sem ARI-213)
+# Propósito: preservar evidência factual de "0/0/0" em snapshots antes de rebuild
+
+# Query executada:
+SELECT period_end, total_traces, error_count, avg_latency_ms, p95_latency_ms, total_cost_usd, agent_id FROM agent_snapshots ORDER BY period_end DESC LIMIT 10;
+
+# Resultado:
+          period_end           | total_traces | error_count | avg_latency_ms | p95_latency_ms | total_cost_usd |               agent_id               
+-------------------------------+--------------+-------------+----------------+----------------+----------------+--------------------------------------
+ 2026-05-08 18:22:14.683767+00 |            0 |           0 |              0 |              0 |              0 | 29c19ed0-eea4-476b-85a2-97404cbf3bb4
+ 2026-05-08 17:22:09.260199+00 |            0 |           0 |              0 |              0 |              0 | 29c19ed0-eea4-476b-85a2-97404cbf3bb4
+ 2026-05-08 17:21:09.233395+00 |            0 |           0 |              0 |              0 |              0 | 29c19ed0-eea4-476b-85a2-97404cbf3bb4
+ 2026-05-08 17:20:09.197488+00 |            0 |           0 |              0 |              0 |              0 | 29c19ed0-eea4-476b-85a2-97404cbf3bb4
+ 2026-05-08 00:43:23.660206+00 |            0 |           0 |              0 |              0 |              0 | 29c19ed0-eea4-476b-85a2-97404cbf3bb4
+ 2026-05-08 00:42:23.638941+00 |            0 |           0 |              0 |              0 |              0 | 29c19ed0-eea4-476b-85a2-97404cbf3bb4
+ 2026-05-08 00:41:23.617199+00 |            0 |           0 |              0 |              0 |              0 | 29c19ed0-eea4-476b-85a2-97404cbf3bb4
+ 2026-05-08 00:40:22.157382+00 |            0 |           0 |              0 |              0 |              0 | 29c19ed0-eea4-476b-85a2-97404cbf3bb4
+ 2026-05-08 00:39:22.117001+00 |            0 |           0 |              0 |              0 |              0 | 29c19ed0-eea4-476b-85a2-97404cbf3bb4
+ 2026-05-06 19:21:02.927803+00 |            0 |           0 |              0 |              0 |              0 | 29c19ed0-eea4-476b-85a2-97404cbf3bb4
+(10 rows)
+

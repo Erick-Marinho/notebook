@@ -1,8 +1,8 @@
 # §6 Heartbeat
 
-> **Status:** 🟢 **Documentado e validado empiricamente.** Cartografia cross-repo completa em 8 áreas (2026-05-02), schema canônico mapeado, pipeline `ProcessHeartbeat` documentado linha-a-linha, drift histórico registrado, 4 gaps identificados e registrados como issues ([ARI-210](https://linear.app/arius-ai/issue/ARI-210) stale detection resolvido em 2026-05-06 / [ARI-211](https://linear.app/arius-ai/issue/ARI-211) error_count cleanup resolvido em 2026-05-05 / [ARI-212](https://linear.app/arius-ai/issue/ARI-212) try/except no loop resolvido em 2026-05-06 / [ARI-213](https://linear.app/arius-ai/issue/ARI-213) latency/cost zerados). **Segundo conceito da plataforma Arius a alcançar 🟢 estrito.**
+> **Status:** 🟢 **Documentado e validado empiricamente.** Cartografia cross-repo completa em 8 áreas (2026-05-02), schema canônico mapeado, pipeline `ProcessHeartbeat` documentado linha-a-linha, drift histórico registrado, 4 gaps identificados e registrados como issues ([ARI-210](https://linear.app/arius-ai/issue/ARI-210) stale detection resolvido em 2026-05-06 / [ARI-211](https://linear.app/arius-ai/issue/ARI-211) error_count cleanup resolvido em 2026-05-05 / [ARI-212](https://linear.app/arius-ai/issue/ARI-212) try/except no loop resolvido em 2026-05-06 / [ARI-213](https://linear.app/arius-ai/issue/ARI-213) enrichment de agent_snapshots resolvido em 2026-05-09). **Segundo conceito da plataforma Arius a alcançar 🟢 estrito.**
 >
-> **Última atualização:** 2026-05-06 (ARI-210 + ARI-212 — defesa em profundidade completa)
+> **Última atualização:** 2026-05-09 (ARI-213 — enrichment de agent_snapshots populado via background task)
 
 ---
 
@@ -245,7 +245,13 @@ Counters fazem parte do payload de heartbeat mas têm vida própria.
 - **Multi-replica safety** via Postgres `ON CONFLICT DO UPDATE`.
 - **Granularidade:** snapshot por heartbeat (60s default). Não há janela rolling explícita — o "intervalo" é o gap entre heartbeats consecutivos.
 
-> **Gap registrado ([ARI-213](https://linear.app/arius-ai/issue/ARI-213), Medium 5pts):** `avg_latency_ms`, `p95_latency_ms`, `total_cost_usd` são **TECH DEBT** zerados em `agent_snapshots` (comentário em código `agents.py:322-324`: "virá de OTel Metrics no futuro"). Snapshot atual é parcial — só `total_traces` e `error_count` são populados.
+> **Gap resolvido — [ARI-213](https://linear.app/arius-ai/issue/ARI-213) (Medium 4pts, 09/05/2026)**
+>
+> Os 3 campos `avg_latency_ms`, `p95_latency_ms`, `total_cost_usd` em `agent_snapshots` são populados via background task post-heartbeat. Use case `EnrichSnapshotKPIs` em `src/application/enrich_snapshot.py` consome traces Langfuse v4 via `kpi_calculator` e faz UPDATE no snapshot recém-criado.
+>
+> Pattern session-per-task (ARI-191) primeira aplicação consciente no Observatory. D-A: bg task vs síncrono — escolhido bg task para preservar Decisão 5 ("heartbeat é informação, não transação"). D-B: lifecycle no shutdown não tratado, aceitável porque enrichment é informação histórica best-effort (próximo heartbeat re-cria snapshot ~60s depois).
+>
+> Comentário enganoso "TECH DEBT: virá de OTel Metrics no futuro" removido. Fonte real é Langfuse v4, não OTel — não há roadmap planejado para OTel Metrics.
 
 ---
 ### Push transitions (relação com heartbeat)
@@ -319,7 +325,7 @@ Cada heartbeat gera um `audit_log` entry com payload completo do que o agente en
 - [ARI-210](https://linear.app/arius-ai/issue/ARI-210) (Done — mergeada 2026-05-06) — stale detection via background sweep (`SweepStaleAgents`). Marca agent.status='unhealthy' quando heartbeats param. Audit log com action `agent_marked_unhealthy`. Loop com try/except (lição ARI-212).
 - [ARI-211](https://linear.app/arius-ai/issue/ARI-211) — cleanup aplicado: `error_count` removido de `HeartbeatRequest`
 - [ARI-212](https://linear.app/arius-ai/issue/ARI-212) (Done — mergeada 2026-05-06) — try/except + log estruturado + Langfuse event no `_heartbeat_loop`. Loop sobrevive a `ValidationError` em Pydantic, `RuntimeError` em registry, e qualquer outra `Exception`. CancelledError preservada (shutdown intencional continua funcionando).
-- [ARI-213](https://linear.app/arius-ai/issue/ARI-213) (Backlog Medium, 5pts) — popular `avg_latency_ms`, `p95_latency_ms`, `total_cost_usd` em `agent_snapshots`
+- [ARI-213](https://linear.app/arius-ai/issue/ARI-213) (Done — mergeada 2026-05-09) — popular `avg_latency_ms`, `p95_latency_ms`, `total_cost_usd` em `agent_snapshots` via enrichment background task
 
 ---
 
@@ -360,9 +366,7 @@ agent loop _heartbeat_loop (60s)
 
 ### Sinais de problema conhecidos
 
-| Issue | Prioridade | Impacto |
-| -- | -- | -- |
-| [ARI-213](https://linear.app/arius-ai/issue/ARI-213) | Medium | `agent_snapshots` parcial: latency/p95/cost zerados — limita HealthScore e clientes Pulso direto |
+Nenhum sinal de problema conhecido pendente após resolução de [ARI-213](https://linear.app/arius-ai/issue/ARI-213) (09/05/2026). Sinais futuros serão registrados conforme aparecerem.
 
 **Defesa em profundidade ARI-210 + ARI-212 completa (2026-05-06):** agent-side (loop sobrevive a exceptions) + server-side (sweep marca agents stale como unhealthy). Cliente Pulso direto agora vê estado real do agent em `GET /agents/{slug}` mesmo se agent crashar ou rede cair. Latência max de detecção: ~150s.
 
@@ -403,12 +407,11 @@ HeartbeatPayload {
 
 ### Gaps no contrato (registrados como issues)
 
-1. **Métricas de latência/custo zeradas ([ARI-213](https://linear.app/arius-ai/issue/ARI-213)):** `agent_snapshots` tem 3 campos como TECH DEBT (`avg_latency_ms`, `p95_latency_ms`, `total_cost_usd`). Bloqueia HealthScore e Pulso Camada 2.
-2. **`last_error_*` só via push:** heartbeat não carrega contexto de erro do CB. Se push falha (sem retry), essa dimensão de auditoria se perde. Heartbeat seguinte sincroniza state+fail_count mas não a causa.
+1. **`last_error_*` só via push:** heartbeat não carrega contexto de erro do CB. Se push falha (sem retry), essa dimensão de auditoria se perde. Heartbeat seguinte sincroniza state+fail_count mas não a causa.
 
 ### Conclusão da seção 6.4
 
-Contrato **funcional para Camada 1** × Operador/SRE (operação básica do Arius admin). **Camada 2 × Cliente Pulso direto exige resolução de [ARI-210](https://linear.app/arius-ai/issue/ARI-210) (stale detection) + [ARI-213](https://linear.app/arius-ai/issue/ARI-213) (latency/cost)** para experiência completa. [ARI-211](https://linear.app/arius-ai/issue/ARI-211) foi resolvida como cleanup; [ARI-212](https://linear.app/arius-ai/issue/ARI-212) segue como robustez sem bloquear o contrato.
+Contrato **funcional para Camada 1** × Operador/SRE (operação básica do Arius admin). Camada 2 × Cliente Pulso direto: [ARI-210](https://linear.app/arius-ai/issue/ARI-210) e [ARI-213](https://linear.app/arius-ai/issue/ARI-213) resolvidas (09/05/2026). Visualização de tendência de latência e custo acumulado por agente está habilitada — `agent_snapshots` fornece série temporal completa. [ARI-211](https://linear.app/arius-ai/issue/ARI-211) foi resolvida como cleanup; [ARI-212](https://linear.app/arius-ai/issue/ARI-212) segue como robustez sem bloquear o contrato.
 
 ---
 
@@ -450,7 +453,7 @@ Contrato **funcional para Camada 1** × Operador/SRE (operação básica do Ariu
 ### Para Pulso (Camada 2)
 
 - Cliente direto precisa de **[ARI-210](https://linear.app/arius-ai/issue/ARI-210) resolvida** para confiar em `agent.status` sem checar `last_heartbeat_at` manualmente
-- **[ARI-213](https://linear.app/arius-ai/issue/ARI-213) resolvida** desbloqueia visualização de tendência de latência e custo acumulado por agent
+- **[ARI-213](https://linear.app/arius-ai/issue/ARI-213) resolvida (09/05/2026)** desbloqueou visualização de tendência de latência e custo acumulado por agente. `agent_snapshots` agora carrega série temporal completa consumível por dashboards Pulso e SLO eval
 - Capacidade de auditoria via `audit_log action=heartbeat` é **diferencial vendável** (rastreabilidade compliance-grade)
 
 ### Aprendizado de processo (cartografia de §6 vs §3)
@@ -486,3 +489,4 @@ Durante a migração do §6 do Linear para o GitHub (2026-05-02), Codex no VS Co
 - **2026-05-02 sessão 3 — §6 → 🟢:** Cartografia completa de Heartbeat em 8 áreas cross-repo. 8 descobertas críticas: stale detection ausente, `error_count` dead code, timeout 1:2 sem documentação, `_heartbeat_loop` sem try/except, sem Unit of Work em `ProcessHeartbeat`, `last_error_*` só via push, latency/cost zerados, `audit_log heartbeat` como contrato implícito. 6 decisões arquiteturais consolidadas. 4 issues criadas: [ARI-210](https://linear.app/arius-ai/issue/ARI-210), [ARI-211](https://linear.app/arius-ai/issue/ARI-211), [ARI-212](https://linear.app/arius-ai/issue/ARI-212), [ARI-213](https://linear.app/arius-ai/issue/ARI-213). "Best-effort by branch" tornado padrão arquitetural transferível. **§6 Heartbeat alcança 🟢 estrito — segundo conceito da plataforma Arius com esse status.**
 - **2026-05-02 sessão 4 — migração para GitHub:** Reference movido do Linear (que comprometeu o save monolítico) para `erickmarinho-notebook` no GitHub. Migração feita em 5 chunks via Codex no VS Code, com validação cross-source contra código real em cada chunk. 2 divergências corrigidas (path do health.py, prefixo do endpoint health-score). Aprendizado de método registrado.
 - **2026-05-08 — [ARI-218](https://linear.app/arius-ai/issue/ARI-218) absorvida (não-bug):** investigação read-only em 3 etapas (cartografia cross-source, audit_log do Observatory, validação isolada de `logging.lastResort` em container efêmero) confirmou Cenário C — interrupção externa do processo (Docker daemon, SIGKILL, ou hibernação da máquina dev), não bug do `_heartbeat_loop`. Sub-hipóteses A, B', B-a, B-b, B-c todas rejeitadas com evidência independente. Validação positiva das afirmações "Loop NUNCA crasha" e "Loop NUNCA morre silenciosamente" do §6.2. Subproduto técnico: `logging.lastResort` confirmado ativo na imagem do agent-standard (Python 3.13.13, `<_StderrHandler <stderr> (WARNING)>`) — `logger.warning/error/exception` emergem em stderr mesmo sem `basicConfig`/`dictConfig`. Recalibra framing de [ARI-220](https://linear.app/arius-ai/issue/ARI-220) de "app cega" para "logging não-estruturado" (urgência mantida — JSON estruturado continua necessário para Pulso Camada 2 e §7 Telemetry).
+- **2026-05-09 — [ARI-213](https://linear.app/arius-ai/issue/ARI-213) resolvida:** enrichment background task post-heartbeat popula `avg_latency_ms`, `p95_latency_ms`, `total_cost_usd` em `agent_snapshots` via `kpi_calculator` (Langfuse v4). Pattern session-per-task primeira aplicação consciente no Observatory. D-A: bg task escolhido vs síncrono. D-B: lifecycle no shutdown não tratado (aceitável para enrichment best-effort). Schema cross-repo intocado, agent-standard intocado, migration desnecessária. Bug silencioso em SLO eval (latency/cost sempre zerados) resolvido. Pulso Camada 2 desbloqueada. Estimativa final 4pts (recalibrada de 3pts originais devido a pattern bg task ser primeira aplicação).
