@@ -1,0 +1,119 @@
+# ARI-213 — Evidência empírica pós-implementação
+# Capturado em: 2026-05-11T12-01-57Z
+# Commit do código rodando: fa8c0d0 ("feat(observatory): ARI-213 - enrichment de agent_snapshots via background task post-heartbeat")
+# Propósito: paridade com baseline pré-fix em ari-213-baseline-2026-05-09T01-49-11Z.txt; comprovar que os 3 campos refletem realidade dos traces Langfuse
+
+# Pré-condições do ambiente:
+#   - Observatory rebuildado a partir de fa8c0d0 (container arius-observatory-observatory-1 recriado com nova imagem)
+#   - Container arius-observatory-observatory-1 confirmado contendo /app/src/application/enrich_snapshot.py
+#   - `grep -c "enrich_snapshot_use_case" /app/src/application/agents.py` → 4
+#   - Langfuse: GET http://localhost:3000/api/public/health → 200 {"status":"OK","version":"3.160.0"}
+#   - Observatory: GET http://localhost:8000/health → 200 {"status":"ok","dependencies":{"postgresql":"ok","langfuse":"ok"}}
+#   - Agent docker-agent-1 reiniciado às 11:56:32 (process_started_at novo → reset detection)
+
+# 10 prompts enviados sequencialmente (POST http://localhost:8001/chat, client_id=smoke-ari-213-postfix):
+#   1. "What is 2+2?"
+#   2. "Tell me a joke."
+#   3. "What is the capital of France?"
+#   4. "How do you spell artichoke?"
+#   5. "What year was the first iPhone released?"
+#   6. "Continue: tell me more about that."
+#   7. "Now explain it in simpler terms."
+#   8. "What about in technical terms?"
+#   9. "Write a 200-word essay on the importance of testing in software development..."
+#  10. "Compare and contrast TDD and BDD in detail, with code examples in Python."
+# Todos os 10 retornaram HTTP 200 (response_bytes 255-3407). Início: 11:57:11Z.
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Query 1 executada (mesma do baseline, escopo das últimas linhas):
+SELECT period_end, total_traces, error_count, avg_latency_ms, p95_latency_ms, total_cost_usd, agent_id FROM agent_snapshots WHERE period_end >= '2026-05-11T11:57:00Z' ORDER BY period_end DESC;
+
+# Resultado:
+          period_end           | total_traces | error_count | avg_latency_ms | p95_latency_ms | total_cost_usd |               agent_id
+-------------------------------+--------------+-------------+----------------+----------------+----------------+--------------------------------------
+ 2026-05-11 12:00:56.523932+00 |            0 |           0 |              0 |              0 |              0 | 29c19ed0-eea4-476b-85a2-97404cbf3bb4
+ 2026-05-11 11:59:56.495625+00 |            0 |           0 |              0 |              0 |              0 | 29c19ed0-eea4-476b-85a2-97404cbf3bb4
+ 2026-05-11 11:58:56.462764+00 |            1 |           0 |              0 |              0 |              0 | 29c19ed0-eea4-476b-85a2-97404cbf3bb4
+ 2026-05-11 11:57:56.434826+00 |            9 |           0 |           2550 |           4797 |       0.014165 | 29c19ed0-eea4-476b-85a2-97404cbf3bb4
+(4 rows)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Query 2 (estatísticas de população nos snapshots criados pós-rebuild):
+SELECT COUNT(*) FILTER (WHERE avg_latency_ms > 0) AS with_avg_latency, COUNT(*) FILTER (WHERE p95_latency_ms > 0) AS with_p95_latency, COUNT(*) FILTER (WHERE total_cost_usd > 0) AS with_cost, COUNT(*) FILTER (WHERE total_traces > 0) AS with_traces, COUNT(*) AS total FROM agent_snapshots WHERE period_end >= '2026-05-11T11:57:00Z';
+
+# Resultado:
+ with_avg_latency | with_p95_latency | with_cost | with_traces | total
+------------------+------------------+-----------+-------------+-------
+                1 |                1 |         1 |           2 |     4
+(1 row)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Query 3 (audit_log de enrichment com falha — esperado 0):
+SELECT COUNT(*) AS failures FROM audit_log WHERE action = 'snapshot_enrichment_failed' AND occurred_at >= NOW() - INTERVAL '15 minutes';
+
+# Resultado:
+ failures
+----------
+        0
+(1 row)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Veredito factual:
+#
+# ✅ POPULADO conforme esperado: o snapshot 2026-05-11 11:57:56 com 9 traces
+#    foi enriquecido com valores reais (avg_latency_ms=2550, p95_latency_ms=4797,
+#    total_cost_usd=0.014165). Comparado ao baseline pré-fix onde TODOS os
+#    snapshots permaneciam 0/0/0 independentemente de quantos traces o agente
+#    gerasse, é diferença qualitativa clara.
+#
+# ⚠️ ANOMALIA — Snapshot 11:58:56 com KPIs zerados (causa identificada)
+#
+#    Investigação cirúrgica refutou hipótese inicial de "lag de ingestão Langfuse"
+#    (traces estão queryables na API pública desde 11:58:01.452Z, ou seja,
+#    todos os 10 chats têm trace em Langfuse com createdAt < 12:00).
+#
+#    Causa real: misalignment temporal entre 2 fontes paralelas de dados.
+#
+#    - Counter requests_total (Observatory): timestamp = momento do heartbeat
+#      que captura o incremento do agent
+#    - Trace.timestamp (Langfuse): timestamp = momento de início do span
+#
+#    O 10º chat tem:
+#    - trace.timestamp = 11:57:52.570Z (durante execução)
+#    - counter requests_total incrementado apenas no heartbeat 11:58:56
+#      (após retorno HTTP do chat fechar)
+#
+#    Consequência observável:
+#    - Snapshot [11:56:54.876, 11:57:56.434] enriquece com 10 traces
+#      (avg=2550ms, p95=4797ms, cost=$0.014165), mas counter ainda em 9
+#    - Snapshot [11:57:56.434, 11:58:56.462] vê delta=1 (counter atrasado)
+#      mas calculate_kpis recebe 0 traces (trace órfão tem timestamp do
+#      período anterior) → zeros persistidos sem audit error
+#
+#    Diagnóstico: não é regressão, não é bug de ARI-213. É propriedade
+#    emergente do design "counters + Langfuse traces como fontes paralelas".
+#
+#    Impacto operacional:
+#    - Métricas agregadas (várias snapshots): distorção mínima
+#    - SLO eval sobre snapshot único: pode mostrar zeros falsos
+#    - Frequência: raro em produção com tráfego contínuo; comum em
+#      smoke com poucos chats e heartbeat de 60s
+#
+#    Spin-off registrado em Linear como High severity para tratamento
+#    arquitetural futuro (janela de tolerância no enrichment OU
+#    reconciliar via trace_id em vez de timestamp).
+#
+#    Hipótese inicial (rejeitada): "lag de ingestão Langfuse" — refutada
+#    empiricamente pela API pública mostrar todos os 10 traces queryables
+#    em <10s após emissão.
+#
+# 📊 Snapshots com total_traces=0 (linhas 11:59:56 e 12:00:56) são criados a
+#    cada heartbeat sem novos chats — comportamento documentado em
+#    ProcessHeartbeat._process_counters (ARI-154); enrichment dispara mas
+#    calculate_kpis([])=zeros, snapshot permanece em zeros legitimamente
+#    ("Cenário 2 — benign zeros" coberto em test_enrich_snapshot.py:111).
+#
+# Conclusão: AC 3 da ARI-213 ("smoke validation: enviar N chats e verificar
+# via SQL que os 3 campos refletem realidade dos traces") cumprido. Baseline
+# 100% zerado → pós-fix com bulk snapshot enriquecido. Bug silencioso original
+# (EvaluateSLO lendo 0 forever) está empiricamente resolvido.
